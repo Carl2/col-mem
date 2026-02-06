@@ -1,0 +1,14 @@
+[database]
+path = "~/.local/share/col_mem/chroma_db"
+collection_name = "memories"
+
+[embedding]
+model = "all-MiniLM-L6-v2"
+
+[search]
+top_k = 10
+
+[metadata]
+# Default metadata fields for filtering
+# Available: project, type, tags, source
+default_type = "memory"

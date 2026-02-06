@@ -1,0 +1,23 @@
+[project]
+name = "col-mem"
+version = "0.1.0"
+description = "Persistent semantic memory for gptel conversations"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb",
+    "sentence-transformers",
+    "tomli",
+]
+
+[project.scripts]
+col-mem = "col_mem.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]

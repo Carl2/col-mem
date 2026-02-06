@@ -1,0 +1,253 @@
+* Project Overview: GPTel Long-Term Memory
+
+** Goal
+Add persistent, semantically-searchable memory to gptel conversations in Emacs.
+
+** Core Flow
+
+#+begin_src artist
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                         TWO OPERATIONS                          │
+  └─────────────────────────────────────────────────────────────────┘
+
+    WRITE                                READ
+    ─────                                ────
+    Buffer → LLM summarize →             Query → Vector search →
+    ChromaDB store                       Consult select → Inject context
+#+end_src
+
+** Components
+
+1. *Python Backend* (=col-mem=)
+   - ChromaDB for vector storage + metadata filtering
+   - CLI interface: =store=, =search=, =delete=, =list=
+   - JSON output for elisp parsing
+
+2. *Elisp Frontend*
+   - =col/save-mem=: Summarize buffer → store to DB
+   - =col/recall-mem=: Search → consult select → inject into prompt
+   - gptel hooks for automatic context retrieval
+
+** Data Flow
+
+#+begin_src
+User writes/chats in Emacs
+         │
+         ▼
+   ┌─────────────┐      ┌─────────────┐      ┌────────────┐
+   │ col/save-mem│ ───> │ LLM Summary │ ───> │  ChromaDB  │
+   └─────────────┘      └─────────────┘      └────────────┘
+                                                   │
+   ┌─────────────┐      ┌─────────────┐            │
+   │ User Query  │ ───> │   Search    │ <──────────┘
+   └─────────────┘      └─────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │ Consult picker  │
+                    │ (select context)│
+                    └─────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │ gptel + context │ ───> LLM response
+                    └─────────────────┘
+#+end_src
+
+** Key Design Decisions
+
+- *User-controlled storage*: No auto-save, explicit =M-x col/save-mem=
+- *User-controlled retrieval*: Consult picker, not auto-inject
+- *Summaries, not raw text*: LLM distills before storage
+- *Title + summary*: Better consult previews, semantic search on summary
+- *ChromaDB over sqlite-vec*: Built-in metadata filtering for projects/tags
+
+** Why ChromaDB?
+
+- *Metadata filtering*: Query with =where={"project": "col_mem", "type": "preference"}=
+- *Built-in embeddings*: Integrates sentence-transformers directly
+- *Automatic persistence*: Handles storage without manual SQL
+- *Expandable*: Tags, projects, types without building custom filters
+
+#+begin_src python
+# Example: filter by project AND vector search
+collection.query(
+    query_texts=["async patterns"],
+    n_results=5,
+    where={"project": "col_mem"},
+    where_document={"$contains": "python"}
+)
+#+end_src
+
+** Overview picture
+#+begin_src artist
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │                              SAVE MEMORY FLOW                               │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────┐         ┌───────────┐         ┌─────┐         ┌───────────┐
+    │ User │         │  Emacs    │         │ LLM │         │ ChromaDB  │
+    └──┬───┘         └─────┬─────┘         └──┬──┘         └─────┬─────┘
+       │                   │                  │                  │
+       │  M-x col/save-mem │                  │                  │
+       │──────────────────>│                  │                  │
+       │                   │                  │                  │
+       │                   │  "summarize this │                  │
+       │                   │   buffer, give   │                  │
+       │                   │   title + facts" │                  │
+       │                   │─────────────────>│                  │
+       │                   │                  │                  │
+       │                   │  {title: "...",  │                  │
+       │                   │   summary: "..."}│                  │
+       │                   │<─────────────────│                  │
+       │                   │                  │                  │
+       │  confirm/edit?    │                  │                  │
+       │<──────────────────│                  │                  │
+       │   [y] / [edit]    │                  │                  │
+       │──────────────────>│                  │                  │
+       │                   │                  │                  │
+       │                   │  store(title, summary, metadata)    │
+       │                   │─────────────────────────────────────>│
+       │                   │                  │                  │
+       │   "Saved: {title}"│                  │                  │
+       │<──────────────────│                  │                  │
+
+
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │                              QUERY WITH MEMORY                              │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+    ┌──────┐         ┌───────────┐         ┌───────────┐         ┌─────┐
+    │ User │         │  Emacs    │         │ ChromaDB  │         │ LLM │
+    └──┬───┘         └─────┬─────┘         └─────┬─────┘         └──┬──┘
+       │                   │                     │                  │
+       │  ask question     │                     │                  │
+       │──────────────────>│                     │                  │
+       │                   │                     │                  │
+       │                   │  search(query,      │                  │
+       │                   │    where={project}) │                  │
+       │                   │────────────────────>│                  │
+       │                   │                     │                  │
+       │                   │  [{title, summary,  │                  │
+       │                   │    distance}, ...]  │                  │
+       │                   │<────────────────────│                  │
+       │                   │                     │                  │
+       │  ┌─────────────────────────────┐        │                  │
+       │  │ consult: select context     │        │                  │
+       │  │ ─────────────────────────── │        │                  │
+       │  │ > [0.92] Python project     │        │                  │
+       │  │   [0.87] Green car prefs    │        │                  │
+       │  │   [0.71] Emacs config       │        │                  │
+       │  └─────────────────────────────┘        │                  │
+       │                   │                     │                  │
+       │  select 1 & 2     │                     │                  │
+       │──────────────────>│                     │                  │
+       │                   │                     │                  │
+       │                   │   query + injected context            │
+       │                   │───────────────────────────────────────>│
+       │                   │                     │                  │
+       │                   │                     │       response   │
+       │                   │<───────────────────────────────────────│
+       │                   │                     │                  │
+       │   response        │                     │                  │
+       │<──────────────────│                     │                  │
+
+
+  ┌─────────────────────────────────────────────────────────────────────────────┐
+  │                               DATA STRUCTURE                                │
+  └─────────────────────────────────────────────────────────────────────────────┘
+
+    ChromaDB Document:
+    ┌────────────────────────────────────────────────────────────┐
+    │  id:        uuid                                           │
+    │  document:  "User prefers asyncio over threads, uses..."   │
+    │  metadata:                                                 │
+    │    title:   "Python async patterns"                        │
+    │    project: "col_mem"                                      │
+    │    type:    "preference"                                   │
+    │    tags:    ["python", "async"]                            │
+    │    source:  "buffer: *gptel-chat*"                         │
+    │    created: "2025-01-15"                                   │
+    │  embedding: [0.012, -0.284, 0.891, ...]  # auto-generated  │
+    └────────────────────────────────────────────────────────────┘
+#+end_src
+
+* DONE Python vector database [100%]
+** DONE Project setup [100%]
+*** DONE Create pyproject.toml with dependencies (chromadb, sentence-transformers)
+CLOSED: [2025-02-06 Thu]
+*** DONE Create config.toml (db path, embedding model, collection name, top_k)
+CLOSED: [2025-02-06 Thu]
+
+** DONE Core memory module [100%]
+*** DONE Initialize ChromaDB: persistent client, get/create collection
+CLOSED: [2025-01-15 ons]
+*** DONE Function: store(title, summary, metadata) → add to collection
+CLOSED: [2025-01-15 ons]
+*** DONE Function: search(query, top_k, where) → query with metadata filters
+CLOSED: [2025-01-15 ons]
+
+** DONE CLI interface [100%]
+*** DONE store command: JSON input with title, summary, metadata
+CLOSED: [2025-01-15 ons]
+*** DONE search command: query with optional top_k, project, type filters
+CLOSED: [2025-01-15 ons]
+*** DONE list command: show all memories with optional filters
+CLOSED: [2025-01-15 ons]
+*** DONE delete command: remove memory by ID
+CLOSED: [2025-01-15 ons]
+*** DONE JSON output for elisp parsing
+CLOSED: [2025-01-15 ons]
+
+* TODO Elisp integration [0%]
+
+** TODO Configuration
+*** TODO Defcustom for python script path
+*** TODO Defcustom for embedding model preference
+*** TODO Defcustom for number of results to show
+
+** TODO col/save-mem command
+*** TODO Extract buffer content (or region if active)
+*** TODO Send to LLM with summarization prompt
+*** TODO Display result for user confirmation/edit
+*** TODO Call python script to store
+
+** TODO Memory retrieval
+*** TODO Function to call python search, parse JSON response
+*** TODO Consult interface for selecting memories
+*** TODO Function to inject selected context into gptel prompt
+
+** TODO gptel integration
+*** TODO Hook or advice to trigger memory search before send
+*** TODO Optional: gptel-tool for LLM-initiated memory read
+
+* TODO Testing & polish [0%]
+
+** TODO Test round-trip: save → search → retrieve
+** TODO Handle edge cases (empty buffer, no results, DB errors)
+** TODO Add org-mode capture template as alternative to col/save-mem
+
+* Stretch goals [0%]
+
+** TODO HyDE (Hypothetical Document Embeddings) for improved retrieval
+Instead of embedding the user's query directly:
+1. Ask LLM to generate a "hypothetical answer" document
+2. Embed that hypothetical document
+3. Search vector DB with this richer embedding
+
+Benefits: Better retrieval for short/vague queries (hypothetical doc is closer in vector space to stored summaries)
+Trade-off: Extra LLM call adds latency + cost
+
+#+begin_src 
+User query: "error handling"
+    │
+    ▼
+LLM generates: "The user prefers try/except with specific
+               exception types, logs to stderr, uses custom
+               exception classes..."
+    │
+    ▼
+Embed hypothetical doc → search → better matches
+#+end_src
+
+Config option: =[retrieval] use_hyde = true/false=

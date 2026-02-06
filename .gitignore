@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ChromaDB data (local dev)
+chroma_db/
+
+# uv
+.uv/
+uv.lock
+
+# Emacs
+*~
+\#*\#
+.#*
+*.elc
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
