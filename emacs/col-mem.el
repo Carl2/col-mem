@@ -111,5 +111,199 @@ TOP-K limits results, PROJECT and TYPE filter by metadata."
 ;; TODO: col-mem-save - summarize buffer/region with LLM, store to DB
 ;; TODO: col-mem-recall - search, consult select, inject context
 
+
+;;;; Consult Integration
+
+(require 'consult)
+
+(defun col-mem--format-candidate (memory)
+  "Format MEMORY alist as a propertized candidate string."
+  (let* ((id (alist-get 'id memory))
+         (title (alist-get 'title memory))
+         (summary (alist-get 'summary memory))
+         (score (alist-get 'score memory))
+         (project (alist-get 'project memory))
+         (display (if score
+                      (format "[%.1f] %s" (* score 100) title)
+                    title)))
+    (propertize display
+                'col-mem-id id
+                'col-mem-title title
+                'col-mem-summary summary
+                'col-mem-project project
+                'col-mem-memory memory)))
+
+(defun col-mem--get-memory (candidate)
+  "Extract memory alist from propertized CANDIDATE string."
+  (when candidate
+    (get-text-property 0 'col-mem-memory candidate)))
+
+(defun col-mem--lookup (candidate candidates _input _narrow)
+  "Lookup function for consult: find CANDIDATE in CANDIDATES.
+Returns the propertized candidate from the list (not the input string)."
+  (when candidate
+    (car (member candidate candidates))))
+
+(defun col-mem--preview (action candidate)
+  "Preview function for consult.
+ACTION is 'preview, 'return, or 'exit. CANDIDATE is the current selection."
+  (pcase action
+    ('preview
+     (when candidate
+       (let* ((memory (col-mem--get-memory candidate))
+              (title (alist-get 'title memory))
+              (summary (alist-get 'summary memory))
+              (project (alist-get 'project memory))
+              (source (alist-get 'source memory))
+              (created (alist-get 'created_at memory))
+              (buf (get-buffer-create "*col-mem-preview*")))
+         (with-current-buffer buf
+           (let ((inhibit-read-only t))
+             (erase-buffer)
+             (insert (propertize (or title "Untitled") 'face 'bold) "\n")
+             (insert (make-string 40 ?─) "\n\n")
+             (when project (insert (format "Project: %s\n" project)))
+             (when source (insert (format "Source: %s\n" source)))
+             (when created (insert (format "Created: %s\n" created)))
+             (insert "\n")
+             (insert (or summary "No summary"))))
+         (display-buffer buf '(display-buffer-in-side-window
+                               (side . right)
+                               (window-width . 0.4))))))
+    ('exit
+     (when-let ((buf (get-buffer "*col-mem-preview*")))
+       (kill-buffer buf)))))
+
+(defun col-mem--format-context (memories)
+  "Format MEMORIES list as context string for injection."
+  (mapconcat
+   (lambda (mem)
+     (format "* %s\n%s"
+             (alist-get 'title mem)
+             (alist-get 'summary mem)))
+   memories
+   "\n\n"))
+
+;;;###autoload
+(defun col-mem-recall (query)
+  "Search memories matching QUERY and insert selected at point."
+  (interactive "sSearch memories: ")
+  (let* ((response (col-mem--search query col-mem-default-top-k col-mem-default-project))
+         (results (alist-get 'results response)))
+    (if (or (null results) (= 0 (length results)))
+        (message "No memories found for: %s" query)
+      (let* ((candidates (mapcar #'col-mem--format-candidate results))
+             (selected (consult--read candidates
+                                      :prompt "Select memory: "
+                                      :category 'col-mem
+                                      :lookup #'col-mem--lookup
+                                      :state #'col-mem--preview
+                                      :sort nil)))
+        (when selected
+          (let* ((memory (col-mem--get-memory selected))
+                 (context (col-mem--format-context (list memory))))
+            (insert context)
+            (message "✓ Inserted memory: %s" (alist-get 'title memory))))))))
+
+;;;###autoload
+(defun col-mem-recall-multi (query)
+  "Search memories matching QUERY and insert multiple selected at point.
+Keep selecting memories until you choose [Done] to finish."
+  (interactive "sSearch memories: ")
+  (let* ((response (col-mem--search query col-mem-default-top-k col-mem-default-project))
+         (results (alist-get 'results response)))
+    (if (or (null results) (= 0 (length results)))
+        (message "No memories found for: %s" query)
+      (let* ((candidates (mapcar #'col-mem--format-candidate results))
+             (done-candidate (propertize "[Done - finish selecting]" 'face 'font-lock-comment-face))
+             (all-candidates (cons done-candidate candidates))
+             (count 0))
+        (catch 'done
+          (while t
+            (let ((selected (consult--read all-candidates
+                                           :prompt (format "Select memory (%d selected): " count)
+                                           :category 'col-mem
+                                           :lookup #'col-mem--lookup
+                                           :state #'col-mem--preview
+                                           :sort nil)))
+              (cond
+               ((or (null selected) (equal selected done-candidate))
+                (throw 'done nil))
+               (t
+                (let* ((memory (col-mem--get-memory selected))
+                       (context (col-mem--format-context (list memory))))
+                  (insert context)
+                  (insert "\n\n")
+                  (cl-incf count)))))))
+        (message "✓ Inserted %d memor%s" count (if (= 1 count) "y" "ies"))))))
+
+
+;;;###autoload
+(defun col-mem-list-all ()
+  "List and browse all stored memories."
+  (interactive)
+  (let* ((response (col-mem--list col-mem-default-project))
+         (results (alist-get 'memories response)))
+    (if (or (null results) (= 0 (length results)))
+        (message "No memories stored")
+      (let* ((candidates (mapcar #'col-mem--format-candidate results))
+             (selected (consult--read candidates
+                                      :prompt "Browse memories: "
+                                      :category 'col-mem
+                                      :lookup #'col-mem--lookup
+                                      :state #'col-mem--preview
+                                      :sort nil)))
+        (when selected
+          (let ((memory (col-mem--get-memory selected)))
+            (message "Selected: %s" (alist-get 'title memory))))))))
+
+;;;###autoload
+(defun col-mem-delete ()
+  "Interactively select and delete a memory."
+  (interactive)
+  (let* ((response (col-mem--list col-mem-default-project))
+         (results (alist-get 'memories response)))
+    (if (or (null results) (= 0 (length results)))
+        (message "No memories to delete")
+      (let* ((candidates (mapcar #'col-mem--format-candidate results))
+             (selected (consult--read candidates
+                                      :prompt "Delete memory: "
+                                      :category 'col-mem
+                                      :lookup #'col-mem--lookup
+                                      :state #'col-mem--preview
+                                      :sort nil)))
+        (when selected
+          (let* ((memory (col-mem--get-memory selected))
+                 (id (alist-get 'id memory))
+                 (title (alist-get 'title memory)))
+            (when (yes-or-no-p (format "Delete '%s'? " title))
+              (col-mem--delete id)
+              (message "✓ Deleted: %s" title))))))))
+
+;;;###autoload
+(defun col-mem-recall-project (project)
+  "Recall memories from PROJECT, select with consult, insert at point.
+With prefix arg, prompt for project name."
+  (interactive
+   (list (if current-prefix-arg
+             (read-string "Project: " col-mem-default-project)
+           (or col-mem-default-project
+               (col-mem--detect-project)))))
+  (let* ((response (col-mem--list project))
+         (results (alist-get 'memories response)))
+    (if (or (null results) (= 0 (length results)))
+        (message "No memories found for project: %s" project)
+      (let* ((candidates (mapcar #'col-mem--format-candidate results))
+             (selected (consult--read candidates
+                                      :prompt (format "Memory [%s]: " project)
+                                      :category 'col-mem
+                                      :lookup #'col-mem--lookup
+                                      :state #'col-mem--preview
+                                      :sort nil)))
+        (when selected
+          (let* ((memory (col-mem--get-memory selected))
+                 (context (col-mem--format-context (list memory))))
+            (insert context)))))))
+
 (provide 'col-mem)
 ;;; col-mem.el ends here

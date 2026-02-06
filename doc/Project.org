@@ -24,9 +24,9 @@ Add persistent, semantically-searchable memory to gptel conversations in Emacs.
    - JSON output for elisp parsing
 
 2. *Elisp Frontend*
-   - =col/save-mem=: Summarize buffer → store to DB
-   - =col/recall-mem=: Search → consult select → inject into prompt
-   - gptel hooks for automatic context retrieval
+   - =col-mem-save=: Summarize buffer → store to DB
+   - =col-mem-recall=: Search → consult select → inject into buffer
+   - gptel hooks for automatic context retrieval (planned)
 
 ** Data Flow
 
@@ -35,7 +35,7 @@ User writes/chats in Emacs
          │
          ▼
    ┌─────────────┐      ┌─────────────┐      ┌────────────┐
-   │ col/save-mem│ ───> │ LLM Summary │ ───> │  ChromaDB  │
+   │ col-mem-save│ ───> │ LLM Summary │ ───> │  ChromaDB  │
    └─────────────┘      └─────────────┘      └────────────┘
                                                    │
    ┌─────────────┐      ┌─────────────┐            │
@@ -56,7 +56,7 @@ User writes/chats in Emacs
 
 ** Key Design Decisions
 
-- *User-controlled storage*: No auto-save, explicit =M-x col/save-mem=
+- *User-controlled storage*: No auto-save, explicit =M-x col-mem-save=
 - *User-controlled retrieval*: Consult picker, not auto-inject
 - *Summaries, not raw text*: LLM distills before storage
 - *Title + summary*: Better consult previews, semantic search on summary
@@ -89,7 +89,7 @@ collection.query(
     │ User │         │  Emacs    │         │ LLM │         │ ChromaDB  │
     └──┬───┘         └─────┬─────┘         └──┬──┘         └─────┬─────┘
        │                   │                  │                  │
-       │  M-x col/save-mem │                  │                  │
+       │  M-x col-mem-save │                  │                  │
        │──────────────────>│                  │                  │
        │                   │                  │                  │
        │                   │  "summarize this │                  │
@@ -121,7 +121,7 @@ collection.query(
     │ User │         │  Emacs    │         │ ChromaDB  │         │ LLM │
     └──┬───┘         └─────┬─────┘         └─────┬─────┘         └──┬──┘
        │                   │                     │                  │
-       │  ask question     │                     │                  │
+       │  M-x col-mem-recall                     │                  │
        │──────────────────>│                     │                  │
        │                   │                     │                  │
        │                   │  search(query,      │                  │
@@ -140,16 +140,11 @@ collection.query(
        │  │   [0.71] Emacs config       │        │                  │
        │  └─────────────────────────────┘        │                  │
        │                   │                     │                  │
-       │  select 1 & 2     │                     │                  │
+       │  select item      │                     │                  │
        │──────────────────>│                     │                  │
        │                   │                     │                  │
-       │                   │   query + injected context            │
-       │                   │───────────────────────────────────────>│
-       │                   │                     │                  │
-       │                   │                     │       response   │
-       │                   │<───────────────────────────────────────│
-       │                   │                     │                  │
-       │   response        │                     │                  │
+       │   context inserted│                     │                  │
+       │   at point        │                     │                  │
        │<──────────────────│                     │                  │
 
 
@@ -158,18 +153,18 @@ collection.query(
   └─────────────────────────────────────────────────────────────────────────────┘
 
     ChromaDB Document:
-    ┌────────────────────────────────────────────────────────────┐
-    │  id:        uuid                                           │
-    │  document:  "User prefers asyncio over threads, uses..."   │
-    │  metadata:                                                 │
-    │    title:   "Python async patterns"                        │
-    │    project: "col_mem"                                      │
-    │    type:    "preference"                                   │
-    │    tags:    ["python", "async"]                            │
-    │    source:  "buffer: *gptel-chat*"                         │
-    │    created: "2025-01-15"                                   │
-    │  embedding: [0.012, -0.284, 0.891, ...]  # auto-generated  │
-    └────────────────────────────────────────────────────────────┘
+    ┌────────────────────────────────────────────────────────────────┐
+    │  id:        uuid                                               │
+    │  document:  "User prefers asyncio over threads, uses..."       │
+    │  metadata:                                                     │
+    │    title:   "Python async patterns"                            │
+    │    project: "col_mem"                                          │
+    │    type:    "preference"                                       │
+    │    tags:    ["python", "async"]                                │
+    │    source:  "buffer: *gptel-chat*"                             │
+    │    created: "2025-01-15"                                       │
+    │  embedding: [0.012, -0.284, 0.891, ...]  # auto-generated      │
+    └────────────────────────────────────────────────────────────────┘
 #+end_src
 
 * DONE Python vector database [100%]
@@ -199,33 +194,49 @@ CLOSED: [2025-01-15 ons]
 *** DONE JSON output for elisp parsing
 CLOSED: [2025-01-15 ons]
 
-* TODO Elisp integration [0%]
+* DONE Elisp integration [100%]
 
-** TODO Configuration
-*** TODO Defcustom for python script path
-*** TODO Defcustom for embedding model preference
-*** TODO Defcustom for number of results to show
+** DONE Configuration [100%]
+CLOSED: [2025-01-15]
+*** DONE Defcustom for python script path
+*** DONE Defcustom for default project
+*** DONE Defcustom for number of results to show (top_k)
 
-** TODO col/save-mem command
-*** TODO Extract buffer content (or region if active)
-*** TODO Send to LLM with summarization prompt
-*** TODO Display result for user confirmation/edit
-*** TODO Call python script to store
+** DONE Core functions [100%]
+CLOSED: [2025-01-15]
+*** DONE col-mem--store: call Python CLI to store memory
+*** DONE col-mem--search: call Python CLI to search, parse JSON response
+*** DONE col-mem--delete: call Python CLI to delete memory
+*** DONE col-mem--list: call Python CLI to list memories
 
-** TODO Memory retrieval
-*** TODO Function to call python search, parse JSON response
-*** TODO Consult interface for selecting memories
-*** TODO Function to inject selected context into gptel prompt
+** DONE Memory storage commands [100%]
+CLOSED: [2025-02-06 Thu]
+*** DONE col-mem-save: summarize buffer via LLM, confirm, store
+*** DONE col-mem-save-direct: manual entry without LLM summarization
 
-** TODO gptel integration
+** DONE Memory retrieval [100%]
+CLOSED: [2025-02-06 Thu]
+*** DONE col-mem--format-candidate: format memory for consult display
+*** DONE col-mem--lookup: consult lookup function (4-arg signature)
+*** DONE col-mem--preview: preview state function for consult
+*** DONE col-mem--get-memory: extract memory from text properties
+*** DONE col-mem--format-context: format memory for insertion
+*** DONE col-mem-recall: search → consult select → insert at point
+*** DONE col-mem-recall-multi: select multiple memories to insert
+*** DONE col-mem-recall-project: list all memories from a project
+*** DONE col-mem-list-all: browse all stored memories
+*** DONE col-mem-delete: interactively delete a memory
+
+** TODO gptel integration [0%]
 *** TODO Hook or advice to trigger memory search before send
 *** TODO Optional: gptel-tool for LLM-initiated memory read
+*** TODO col-mem-recall-to-gptel: inject context into gptel system prompt
 
 * TODO Testing & polish [0%]
 
 ** TODO Test round-trip: save → search → retrieve
 ** TODO Handle edge cases (empty buffer, no results, DB errors)
-** TODO Add org-mode capture template as alternative to col/save-mem
+** TODO Add org-mode capture template as alternative to col-mem-save
 
 * Stretch goals [0%]
 
@@ -238,7 +249,7 @@ Instead of embedding the user's query directly:
 Benefits: Better retrieval for short/vague queries (hypothetical doc is closer in vector space to stored summaries)
 Trade-off: Extra LLM call adds latency + cost
 
-#+begin_src 
+#+begin_src
 User query: "error handling"
     │
     ▼
@@ -251,3 +262,36 @@ Embed hypothetical doc → search → better matches
 #+end_src
 
 Config option: =[retrieval] use_hyde = true/false=
+
+* Available Commands
+
+| Command                  | Description                                              |
+|--------------------------+----------------------------------------------------------|
+| =col-mem-save=           | Summarize buffer/region/heading with LLM, confirm, store |
+| =col-mem-save-direct=    | Manually enter title/summary, store                      |
+| =col-mem-recall=         | Search memories, select with consult, insert             |
+| =col-mem-recall-multi=   | Search and select multiple memories to insert            |
+| =col-mem-recall-project= | List all memories from a project, select, insert         |
+| =col-mem-list-all=       | Browse all memories (optional project filter)            |
+| =col-mem-delete=         | Delete a memory by selecting from list                   |
+
+* Example Usage
+
+#+begin_src elisp
+;; Store a memory directly
+(col-mem--store "My Preference"
+                "User prefers dark themes in all applications"
+                "preferences")
+
+;; Search memories
+(col-mem--search "dark theme" 5 nil)
+
+;; Interactive: M-x col-mem-recall RET theme RET
+;; → Select from consult list → Inserted at point
+
+;; Interactive: M-x col-mem-recall-project
+;; → Lists all memories for current project → Select → Insert
+
+;; Interactive: C-u M-x col-mem-recall-project
+;; → Prompts for project name → Lists memories → Select → Insert
+#+end_src
